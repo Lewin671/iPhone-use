@@ -1,0 +1,255 @@
+diff --git a/WebDriverAgentLib/Routing/FBHTTPServer.m b/WebDriverAgentLib/Routing/FBHTTPServer.m
+index 767e7fcf..10cc19f6 100644
+--- a/WebDriverAgentLib/Routing/FBHTTPServer.m
++++ b/WebDriverAgentLib/Routing/FBHTTPServer.m
+@@ -7,6 +7,7 @@
+  */
+ 
+ #import "FBHTTPServer.h"
++#import "FBUseAuthentication.h"
+ 
+ #import "FBCommandStatus.h"
+ #import "FBConfiguration.h"
+@@ -328,6 +329,10 @@ - (void)stop:(BOOL)immediately
+ - (void)didClientConnect:(nw_connection_t)newClient
+ {
+   @synchronized (self.connectionBuffers) {
++    if (self.connectionBuffers.count >= 32) {
++      nw_connection_cancel(newClient);
++      return;
++    }
+     [self.connectionBuffers setObject:[NSMutableData data] forKey:newClient];
+     // Starts at connect, so a peer that connects and then sends nothing is reaped too.
+     [self.incompleteRequestStarts setObject:[NSDate date] forKey:newClient];
+@@ -494,7 +499,8 @@ - (BOOL)findHeaderBlockEnd:(out NSRange *)outHeaderEndRange
+     NSString *normalizedName = name.lowercaseString;
+     // RFC 7230 (3.3.3): repeated framing fields are unrecoverable. Last-wins would let an empty
+     // "Transfer-Encoding:" mask an earlier "chunked", and the last Content-Length drive parsing.
+-    if (([normalizedName isEqualToString:@"content-length"] || [normalizedName isEqualToString:@"transfer-encoding"])
++    if (([normalizedName isEqualToString:@"content-length"] || [normalizedName isEqualToString:@"transfer-encoding"] ||
++         [normalizedName isEqualToString:@"authorization"] || [normalizedName isEqualToString:@"origin"])
+         && nil != requestHeaders[normalizedName]) {
+       [self respondBadRequestToClient:client];
+       return nil;
+@@ -570,6 +576,14 @@ - (nullable FBPendingHTTPRequestHeader *)parsedRequestHeaderFromBuffer:(NSMutabl
+   if (nil == requestHeaders) {
+     return nil;
+   }
++  if (nil != requestHeaders[@"origin"] || !FBUseAuthorized(requestHeaders[@"authorization"])) {
++    RouteResponse *denied = [RouteResponse new];
++    denied.statusCode = (HTTPStatusCode)401;
++    [denied setHeader:@"Content-Type" value:@"application/json"];
++    [denied respondWithString:@"{\"value\":{\"error\":\"authentication required\",\"message\":\"Device authentication required\"}}"];
++    [self failClient:client withResponse:denied];
++    return nil;
++  }
+   NSUInteger contentLength = 0;
+   if (![self resolveBodyLength:&contentLength fromHeaderFields:requestHeaders forClient:client]) {
+     return nil;
+diff --git a/WebDriverAgentLib/Routing/FBUseAuthentication.h b/WebDriverAgentLib/Routing/FBUseAuthentication.h
+new file mode 100644
+index 00000000..3bef1056
+--- /dev/null
++++ b/WebDriverAgentLib/Routing/FBUseAuthentication.h
+@@ -0,0 +1,55 @@
++// iPhone Use authentication. A missing credential closes both services.
++// Copyright (c) 2026 Lewin671. MIT License.
++#pragma once
++#import <Foundation/Foundation.h>
++
++static inline NSString *FBUseToken(void)
++{
++  NSString *token = NSProcessInfo.processInfo.environment[@"IPHONE_USE_DEVICE_TOKEN"];
++  if (token.length != 64 || [token rangeOfCharacterFromSet:
++      [[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet]].location != NSNotFound) {
++    return nil;
++  }
++  return token;
++}
++
++static inline BOOL FBUseAuthorized(NSString *authorization)
++{
++  NSString *token = FBUseToken();
++  if (nil == token || nil == authorization) { return NO; }
++  NSData *expected = [[@"Bearer " stringByAppendingString:token] dataUsingEncoding:NSUTF8StringEncoding];
++  NSData *provided = [authorization dataUsingEncoding:NSUTF8StringEncoding];
++  if (provided.length != expected.length) { return NO; }
++  const unsigned char *a = (const unsigned char *)expected.bytes;
++  const unsigned char *b = (const unsigned char *)provided.bytes;
++  unsigned char difference = 0;
++  for (NSUInteger i = 0; i < expected.length; i++) { difference |= a[i] ^ b[i]; }
++  return difference == 0;
++}
++
++// Only a complete, bodyless GET / request can begin a screenshot stream.
++static inline BOOL FBUseStreamAuthorized(NSData *headerData)
++{
++  NSString *header = [[NSString alloc] initWithData:headerData encoding:NSUTF8StringEncoding];
++  if (nil == header) { return NO; }
++  NSArray<NSString *> *lines = [header componentsSeparatedByString:@"\r\n"];
++  if (!([lines.firstObject isEqualToString:@"GET / HTTP/1.1"] ||
++        [lines.firstObject isEqualToString:@"GET / HTTP/1.0"])) { return NO; }
++  NSMutableDictionary *fields = [NSMutableDictionary dictionary];
++  for (NSUInteger i = 1; i < lines.count; i++) {
++    NSString *line = lines[i];
++    if (line.length == 0) { continue; }
++    NSRange colon = [line rangeOfString:@":"];
++    if (colon.location == NSNotFound || colon.location == 0) { return NO; }
++    NSString *name = [line substringToIndex:colon.location];
++    if ([name rangeOfCharacterFromSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].location != NSNotFound) { return NO; }
++    name = name.lowercaseString;
++    if (fields[name] != nil) { return NO; }
++    NSString *value = [[line substringFromIndex:colon.location + 1]
++                      stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
++    fields[name] = value;
++  }
++  return nil == fields[@"origin"] && nil == fields[@"transfer-encoding"] &&
++    (nil == fields[@"content-length"] || [fields[@"content-length"] isEqualToString:@"0"]) &&
++    FBUseAuthorized(fields[@"authorization"]);
++}
+diff --git a/WebDriverAgentLib/Routing/FBWebServer.m b/WebDriverAgentLib/Routing/FBWebServer.m
+index af0d82b3..69f3c542 100644
+--- a/WebDriverAgentLib/Routing/FBWebServer.m
++++ b/WebDriverAgentLib/Routing/FBWebServer.m
+@@ -7,6 +7,7 @@
+  */
+ 
+ #import "FBWebServer.h"
++#import "FBUseAuthentication.h"
+ 
+ #import "FBHTTPServer.h"
+ #import "FBMjpegServer.h"
+@@ -61,6 +62,10 @@ - (void)dealloc
+ 
+ - (void)startServing
+ {
++  if (nil == FBUseToken()) {
++    [FBLogger log:@"iPhone Use credential missing or invalid; no control or video listener was started"];
++    return;
++  }
+   [FBLogger logFmt:@"Built at %s %s", __DATE__, __TIME__];
+   self.exceptionHandler = [FBExceptionHandler new];
+   if (![self startHTTPServer]) {
+@@ -79,8 +84,7 @@ - (BOOL)startHTTPServer
+   self.server = [[FBHTTPServer alloc] init];
+   [self.server setRouteQueue:dispatch_get_main_queue()];
+   [self.server setDefaultHeader:@"Server" value:@"WebDriverAgent/1.0"];
+-  [self.server setDefaultHeader:@"Access-Control-Allow-Origin" value:@"*"];
+-  [self.server setDefaultHeader:@"Access-Control-Allow-Headers" value:@"Content-Type, X-Requested-With"];
++  [self.server setDefaultHeader:@"X-IPhone-Use-Auth" value:@"bearer-v1"];
+ 
+   [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(sessionWasKilled:)
+diff --git a/WebDriverAgentLib/Utilities/FBMjpegServer.m b/WebDriverAgentLib/Utilities/FBMjpegServer.m
+index 0b4a67f2..379b2cd4 100644
+--- a/WebDriverAgentLib/Utilities/FBMjpegServer.m
++++ b/WebDriverAgentLib/Utilities/FBMjpegServer.m
+@@ -7,6 +7,7 @@
+  */
+ 
+ #import "FBMjpegServer.h"
++#import "../Routing/FBUseAuthentication.h"
+ 
+ #import <mach/mach_time.h>
+ @import UniformTypeIdentifiers;
+@@ -50,6 +51,7 @@ @interface FBMjpegServer()
+ @property (nonatomic, assign) NSUInteger droppedFramesCount;
+ // Frames submitted but not sent yet, per client. Guarded by @synchronized (self.listeningClients).
+ @property (nonatomic, readonly) NSMapTable<id, NSNumber *> *pendingFrameCounts;
++@property (nonatomic, readonly) NSMapTable<id, NSMutableData *> *authBuffers;
+ 
+ @end
+ 
+@@ -66,6 +68,8 @@ - (instancetype)init
+     _listeningClients = [NSMutableArray array];
+     _pendingFrameCounts = [NSMapTable mapTableWithKeyOptions:(NSPointerFunctionsOptions)(NSMapTableObjectPointerPersonality | NSMapTableStrongMemory)
+                                                 valueOptions:(NSPointerFunctionsOptions)NSMapTableStrongMemory];
++    _authBuffers = [NSMapTable mapTableWithKeyOptions:(NSPointerFunctionsOptions)(NSMapTableObjectPointerPersonality | NSMapTableStrongMemory)
++                                       valueOptions:(NSPointerFunctionsOptions)NSMapTableStrongMemory];
+     _imageProcessor = [[FBImageProcessor alloc] init];
+     dispatch_queue_attr_t queueAttributes = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0);
+     _backgroundQueue = dispatch_queue_create(QUEUE_NAME, queueAttributes);
+@@ -195,22 +199,57 @@ - (void)sendScreenshot:(NSData *)screenshotData {
+ 
+ - (void)didClientConnect:(nw_connection_t)newClient
+ {
+-  [FBLogger log:@"Got screenshots broadcast client connection"];
+-  // FBTCPSocket already schedules the receive that -client:didReceiveData: relies on below.
++  @synchronized (self.listeningClients) {
++    if (self.authBuffers.count + self.listeningClients.count >= 16) {
++      nw_connection_cancel(newClient);
++      return;
++    }
++    [self.authBuffers setObject:[NSMutableData data] forKey:newClient];
++  }
++  __weak typeof(self) weakSelf = self;
++  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
++                 dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
++    __strong typeof(weakSelf) strongSelf = weakSelf;
++    if (nil == strongSelf) { return; }
++    @synchronized (strongSelf.listeningClients) {
++      if ([strongSelf.authBuffers objectForKey:newClient] != nil) {
++        [strongSelf.authBuffers removeObjectForKey:newClient];
++        nw_connection_cancel(newClient);
++      }
++    }
++  });
+ }
+ 
+ - (void)client:(nw_connection_t)client didReceiveData:(NSData *)data
+ {
+   @synchronized (self.listeningClients) {
+-    if ([self.listeningClients containsObject:client]) {
++    if ([self.listeningClients containsObject:client]) { return; }
++    NSMutableData *buffer = [self.authBuffers objectForKey:client];
++    if (nil == buffer) { return; }
++    if (data.length > 8192 || buffer.length + data.length > 8192) {
++      [self.authBuffers removeObjectForKey:client];
++      nw_connection_cancel(client);
+       return;
+     }
+-  }
+-
+-  [FBLogger log:@"Starting screenshots broadcast for the client"];
+-  NSString *streamHeader = [NSString stringWithFormat:@"HTTP/1.0 200 OK\r\nServer: %@\r\nConnection: close\r\nMax-Age: 0\r\nExpires: 0\r\nCache-Control: no-cache, private\r\nPragma: no-cache\r\nContent-Type: multipart/x-mixed-replace; boundary=--BoundaryString\r\n\r\n", SERVER_NAME];
+-  [self.socket writeData:(id)[streamHeader dataUsingEncoding:NSUTF8StringEncoding] toClient:client];
+-  @synchronized (self.listeningClients) {
++    [buffer appendData:data];
++    NSData *delimiter = [@"\r\n\r\n" dataUsingEncoding:NSUTF8StringEncoding];
++    NSRange end = [buffer rangeOfData:delimiter options:(NSDataSearchOptions)0 range:NSMakeRange(0, buffer.length)];
++    if (end.location == NSNotFound) { return; }
++    NSData *header = [buffer subdataWithRange:NSMakeRange(0, end.location)];
++    [self.authBuffers removeObjectForKey:client];
++    if (buffer.length != end.location + end.length || !FBUseStreamAuthorized(header)) {
++      NSData *denied = [@"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
++                        dataUsingEncoding:NSUTF8StringEncoding];
++      dispatch_data_t payload = dispatch_data_create(denied.bytes, denied.length,
++                                                      dispatch_get_global_queue(QOS_CLASS_UTILITY, 0),
++                                                      DISPATCH_DATA_DESTRUCTOR_DEFAULT);
++      nw_connection_send(client, payload, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT, true, ^(nw_error_t error) {
++        nw_connection_cancel(client);
++      });
++      return;
++    }
++    NSString *streamHeader = [NSString stringWithFormat:@"HTTP/1.0 200 OK\r\nServer: %@\r\nX-IPhone-Use-Auth: bearer-v1\r\nConnection: close\r\nMax-Age: 0\r\nExpires: 0\r\nCache-Control: no-cache, private\r\nPragma: no-cache\r\nContent-Type: multipart/x-mixed-replace; boundary=--BoundaryString\r\n\r\n", SERVER_NAME];
++    [self.socket writeData:(id)[streamHeader dataUsingEncoding:NSUTF8StringEncoding] toClient:client];
+     [self.listeningClients addObject:client];
+   }
+ }
+@@ -219,6 +258,7 @@ - (void)didClientDisconnect:(nw_connection_t)client
+ {
+   @synchronized (self.listeningClients) {
+     [self.listeningClients removeObject:client];
++    [self.authBuffers removeObjectForKey:client];
+     [self.pendingFrameCounts removeObjectForKey:client];
+   }
+   // Nothing is owed to a client that stopped listening, so its socket can go right away.
+@@ -233,6 +273,8 @@ - (void)stopStreaming
+     NSArray<nw_connection_t> *clients = self.listeningClients.copy;
+     [self.listeningClients removeAllObjects];
+     [self.pendingFrameCounts removeAllObjects];
++    for (nw_connection_t pending in self.authBuffers.keyEnumerator.allObjects) { nw_connection_cancel(pending); }
++    [self.authBuffers removeAllObjects];
+     for (nw_connection_t client in clients) {
+       nw_connection_cancel(client);
+     }

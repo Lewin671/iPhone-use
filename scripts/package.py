@@ -9,11 +9,11 @@ import sys
 import zipfile
 
 ROOT=Path(__file__).resolve().parents[1]
-FILES=('plugin.json','mcp.json','.mcp.json','.codex-plugin/plugin.json','.agents/plugins/marketplace.json','README.md','README.en.md','ANALYTICS.md','CHANGELOG.md','LICENSE','THIRD_PARTY_NOTICES.md','ui/package.json','ui/package-lock.json','ui/build.mjs','ui/src/app.ts','ui/index.html','ui/style.css','ui/tsconfig.json','ui/tests/widget.test.mjs')
+FILES=('plugin.json','mcp.json','.mcp.json','.codex-plugin/plugin.json','.agents/plugins/marketplace.json','README.md','README.en.md','ANALYTICS.md','SECURITY.md','CHANGELOG.md','LICENSE','THIRD_PARTY_NOTICES.md','ui/package.json','ui/package-lock.json','ui/build.mjs','ui/src/app.ts','ui/index.html','ui/style.css','ui/tsconfig.json','ui/tests/widget.test.mjs')
 DIRS=('assets','server','skills')
 INSTALL_SCRIPTS=('phone.py','wda.sh','update_app_catalog.py','check_screen_ui.py','package.py','install.sh','register_mcp.py')
 SOURCE_DIRS=('scripts','tests','.github')
-TOOLING_FILES=('package.json','package-lock.json','forward.mjs','screen-stream.mjs')
+TOOLING_FILES=('package.json','package-lock.json','forward.mjs','screen-stream.mjs','device-transport.mjs','auth.mjs','wda-auth.patch')
 
 
 def package_files(source_package=False):
@@ -22,7 +22,7 @@ def package_files(source_package=False):
     for dirname in DIRS+(SOURCE_DIRS if source_package else ()):
         sources.extend((ROOT/dirname).rglob('*'))
     if source_package:
-        sources.append(ROOT/'.gitignore')
+        sources.extend((ROOT/'.gitignore', ROOT/'.gitattributes'))
     else:
         sources.extend(ROOT/'scripts'/name for name in INSTALL_SCRIPTS)
     sources.extend(ROOT/'tooling'/name for name in TOOLING_FILES)

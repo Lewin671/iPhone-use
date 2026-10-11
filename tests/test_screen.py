@@ -316,6 +316,7 @@ class NodeStreamTests(unittest.TestCase):
                 requests.append(self.path)
                 self.send_response(200)
                 self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                self.send_header("X-IPhone-Use-Auth", "bearer-v1")
                 self.send_header("Transfer-Encoding", "chunked")
                 self.end_headers()
                 for offset in range(0, len(body), 7):
@@ -332,14 +333,20 @@ class NodeStreamTests(unittest.TestCase):
                 runtime = Path(temporary)
                 script = runtime / "screen-stream.mjs"
                 script.write_bytes((ROOT / "tooling/screen-stream.mjs").read_bytes())
+                for name in ("device-transport.mjs", "auth.mjs"):
+                    (runtime / name).write_bytes((ROOT / "tooling" / name).read_bytes())
+                from device_security import control_token
+                control_token(runtime)
                 stub = runtime / "node_modules/appium-ios-device"
                 stub.mkdir(parents=True)
                 (stub / "package.json").write_text('{"type":"module","main":"index.js"}')
                 # appium-ios-device returns the socket paused after unpiping its
                 # usbmux plist reader. A fresh, flowing TCP fixture hides this.
-                (stub / "index.js").write_text("import net from 'node:net'; export default {utilities:{connectPort: async () => "
-                                               f"net.connect({server.server_port}, '127.0.0.1').pause()" + "}};")
+                (stub / "index.js").write_text("import net from 'node:net'; const original=net.createConnection; "
+                    f"net.createConnection=function(options,...args){{return options?.path==='/var/run/usbmuxd'?original.call(net,{{host:'127.0.0.1',port:{server.server_port}}},...args):original.call(net,options,...args)}}; "
+                    "export default {Usbmux:class{constructor(socket){this.socket=socket}async listDevices(){return [{Properties:{SerialNumber:'TEST-DEVICE-1234',ConnectionType:'USB',DeviceID:1}}]}async connect(){return this.socket.pause()}close(){this.socket.destroy()}}};")
                 result = subprocess.run([shutil.which("node"), str(script), "TEST-DEVICE-1234", "9100"],
+                                        env={**os.environ, "IPHONE_USE_AUTH_FILE": str(runtime / "control-token")},
                                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
                 self.assertEqual(result.stdout, body)
                 self.assertEqual(result.stderr, b"")

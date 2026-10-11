@@ -1,6 +1,8 @@
 // A single owned USB connection to WDA's independent MJPEG port. stdout is JPEG
 // stream bytes only; this program never binds a listener or touches XCTest.
 import http from 'node:http';
+import { createConnector, createUSBConnector } from './device-transport.mjs';
+import { AUTH_PROTOCOL, loadToken } from './auth.mjs';
 
 // Device-library diagnostics must never corrupt the binary pipe or expose IDs.
 for (const method of ['log', 'info', 'warn', 'error', 'debug']) console[method] = () => {};
@@ -11,7 +13,7 @@ if (!Number.isInteger(devicePort) || devicePort < 1024 || devicePort > 65535) pr
 
 let socket, request, response, agent;
 let stopping = false;
-const startup = setTimeout(() => stop(1), 5000);
+const startup = setTimeout(() => stop(1), 15000);
 function stop(code = 0) {
   if (stopping) return;
   stopping = true;
@@ -29,7 +31,9 @@ process.stdout.on('error', () => stop());
 
 try {
   const {default: iosDevice} = await import('appium-ios-device');
-  socket = await iosDevice.utilities.connectPort(udid, devicePort);
+  const token = loadToken();
+  const connect = createConnector(createUSBConnector(iosDevice.Usbmux));
+  socket = await connect(udid, devicePort);
   if (stopping) socket.destroy();
   else {
     socket.setNoDelay?.(true);
@@ -39,10 +43,10 @@ try {
     agent = new http.Agent({keepAlive: false});
     agent.createConnection = () => socket;
     request = http.request({host: '127.0.0.1', port: devicePort, path: '/',
-      method: 'GET', agent, headers: {Accept: 'multipart/x-mixed-replace', Connection: 'close'}}, incoming => {
+      method: 'GET', agent, headers: {Accept: 'multipart/x-mixed-replace', Connection: 'close', Authorization: `Bearer ${token}`}}, incoming => {
       response = incoming;
       clearTimeout(startup);
-      if (incoming.statusCode !== 200) { stop(1); return; }
+      if (incoming.statusCode !== 200 || incoming.headers['x-iphone-use-auth'] !== AUTH_PROTOCOL) { stop(1); return; }
       incoming.on('error', () => stop(1));
       incoming.on('end', () => stop(1));
       // pipe pauses the response when stdout is full, bounding backpressure.

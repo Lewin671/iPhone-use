@@ -4,6 +4,8 @@ import http.client
 import json
 import socket
 import time
+import re
+from device_security import AUTH_PROTOCOL
 from urllib.parse import urlsplit
 
 # One element query answers with the fields target selection needs, so it replaces
@@ -24,12 +26,17 @@ class WDAError(Exception):
 
 
 class WDAClient:
-    def __init__(self, base_url="http://127.0.0.1:18100", timeout=15):
+    def __init__(self, base_url="http://127.0.0.1:18100", timeout=15, token=None):
         parsed = urlsplit(base_url)
         if parsed.scheme != "http" or parsed.hostname not in ("127.0.0.1", "localhost", "::1") or parsed.path not in ("", "/") or parsed.username or parsed.query or parsed.fragment:
             raise ValueError("PUA URL must be a local HTTP endpoint; forward USB to loopback first.")
+        if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{64}", token):
+            raise ValueError("A private device authentication credential is required.")
+        self.token = token
+        self.transport = None
         self.host, self.port = parsed.hostname, parsed.port or 80
         self.timeout, self.connection, self.session_id = timeout, None, None
+        self._authenticated = False
         self._settings_session_id, self._settings_error = None, None
         self.records = collections.deque(maxlen=2000)
 
@@ -37,6 +44,7 @@ class WDAClient:
         if self.connection:
             self.connection.close()
         self.connection = None
+        self._authenticated = False
 
     @staticmethod
     def is_read(method, path):
@@ -63,6 +71,8 @@ class WDAClient:
     def request(self, method, path, payload=None, timeout=None):
         deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
         readonly = self.is_read(method, path)
+        if not readonly and (not self._authenticated or not self.connection or not self.connection.sock):
+            self._request_once("GET", "/status", None, self.remaining(deadline), True, probe=True)
         for attempt in range(2 if readonly else 1):
             try:
                 return self._request_once(method, path, payload, self.remaining(deadline), readonly)
@@ -73,7 +83,7 @@ class WDAClient:
                         and time.monotonic() < deadline):
                     raise
 
-    def _request_once(self, method, path, payload, budget, readonly):
+    def _request_once(self, method, path, payload, budget, readonly, probe=False):
         started = time.monotonic()
         deadline = started + budget
         status, code, received = None, None, 0
@@ -84,7 +94,9 @@ class WDAClient:
             if self.connection.sock:
                 self.connection.sock.settimeout(budget)
             body = None if payload is None else json.dumps(payload, ensure_ascii=False, allow_nan=False).encode()
-            self.connection.request(method, path, body, {"Content-Type": "application/json", "Accept": "application/json"})
+            headers = {"Content-Type": "application/json", "Accept": "application/json", "Authorization": "Bearer " + self.token}
+            if probe: headers["X-IPhone-Use-Probe"] = "1"
+            self.connection.request(method, path, body, headers)
             network_socket = self.connection.sock
             remaining = deadline-time.monotonic()
             if remaining <= 0:
@@ -93,6 +105,14 @@ class WDAClient:
                 network_socket.settimeout(remaining)
             response = self.connection.getresponse()
             status = response.status
+            transport = response.getheader("X-IPhone-Use-Transport")
+            self.transport = transport if transport in ("usb", "wifi") else None
+            if status in (401, 403):
+                self.close()
+                raise WDAError("authentication_required", "Device authentication rejected; inspect setup, do not retry.")
+            if response.getheader("X-IPhone-Use-Auth") != AUTH_PROTOCOL:
+                self.close()
+                raise WDAError("authentication_required", "Unsecured device service refused; rebuild the secured runner.", uncertain=not readonly)
             # read1 returns available buffered bytes instead of waiting for a full
             # body. Resetting the socket timeout to the remaining budget bounds
             # slow/chunked responses too, rather than granting each receive anew.
@@ -121,10 +141,13 @@ class WDAClient:
                 raise WDAError("invalid_response", "PUA returned invalid JSON.", uncertain=not readonly) from exc
             if not isinstance(result, dict):
                 raise WDAError("invalid_response", "PUA returned a non-object.", uncertain=not readonly)
+            if probe and status != 200:
+                raise WDAError("authentication_required", "Device authentication handshake failed; no action was sent.")
+            self._authenticated = True
             value = result.get("value")
             if isinstance(value, dict) and value.get("error"):
                 code = value["error"]
-                raise WDAError(code, value.get("message", code)[:1500])
+                raise WDAError(code, value.get("message", code)[:1500], uncertain=code == "action_uncertain")
             if status >= 400:
                 raise WDAError("http_error", f"PUA returned HTTP {status}.", uncertain=not readonly)
             return result

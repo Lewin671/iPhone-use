@@ -4,7 +4,7 @@
 
 ![iPhone Use 在 Codex 中操作真实 iPhone 并实时展示手机屏幕](assets/iphone-use-demo.png)
 
-让 Codex 通过 USB 操作你的真实 iPhone。用自然语言描述任务，Codex 就能打开 App、读取页面、点击、滚动、输入文字、整理列表，并在侧边栏展示手机屏幕。
+让 Codex 通过 USB 或已配对设备的 Wi-Fi 隧道操作你的真实 iPhone。用自然语言描述任务，Codex 就能打开 App、读取页面、点击、滚动、输入文字、整理列表，并在侧边栏展示手机屏幕。
 
 iPhone Use 使用 [WebDriverAgent](https://github.com/appium/WebDriverAgent)（WDA）与 iPhone 通信，包含本地 MCP 服务、安装与使用技能，以及实时屏幕 widget。它优先复用现有连接与构建；控件定位失败时，指导模型查看截图并尝试坐标点击。
 
@@ -18,7 +18,7 @@ iPhone Use 使用 [WebDriverAgent](https://github.com/appium/WebDriverAgent)（W
 
 ```text
 请帮我安装和配置 iPhone Use：
-https://github.com/zhongerxin/iPhone-use
+https://github.com/Lewin671/iPhone-use
 
 先读取仓库 README 和安装脚本，检查本机 Codex CLI、Python、Node.js、npm、
 完整 Xcode，以及通过 USB 连接的 iPhone。把项目放到合适的本机目录，
@@ -36,7 +36,7 @@ https://github.com/zhongerxin/iPhone-use
 
 安装插件后，当前聊天可能需要重新连接才能加载工具，流程可在重连后继续。Apple 账号登录、设备信任、开发者模式及手机解锁仍需本人在系统界面完成。
 
-仓库目前为私有，需要有 GitHub 访问权限，或者使用已取得的源代码包。
+此 fork 包含 Wi-Fi 连接与强制鉴权；安全边界及验收要求见 [SECURITY.md](SECURITY.md)。
 
 ## 安装依赖
 
@@ -49,7 +49,7 @@ https://github.com/zhongerxin/iPhone-use
 | Python 3.9+ | 运行 MCP 服务；Python 端使用标准库 |
 | Node.js 20.19+、22.12+ 或 24+，npm 10+ | USB 转发与屏幕流；支持范围以项目 engines 和 doctor 检查为准 |
 
-Xcode 需要支持手机当前的 iOS 版本。无需越狱，也无需单独启动 Appium Server。WDA 固定使用已验证的 16.14.0 提交，下载、依赖安装、签名和构建由 setup 流程管理。
+Xcode 需要支持手机当前的 iOS 版本。无需越狱，也无需单独启动 Appium Server。WDA 基于固定的 16.14.0 提交，fetch 仅在插件管理的干净源码上应用随包鉴权补丁。构建指纹包含补丁摘要，旧的无鉴权构建和服务不会被复用。下载、依赖安装、签名和构建由 setup 流程管理。
 
 ### 先在自己的 iPhone 上安装并启动 WDA
 
@@ -61,14 +61,14 @@ Xcode 需要支持手机当前的 iOS 版本。无需越狱，也无需单独启
 
 1. 用 USB 连接自己的 iPhone，信任这台 Mac，按系统要求开启开发者模式，并在 Xcode 中配置自己的 Apple 账号。
 2. 打开获取的 WDA 源码中的 `WebDriverAgent.xcodeproj`，选择 `WebDriverAgentRunner` scheme 和自己的 iPhone；在 Runner target 的 **Signing & Capabilities** 中选择自己的 Team 与可签名的 Bundle Identifier。
-3. 使用 **Product → Test** 构建、安装并运行 WDA Runner，按手机上的实际提示完成信任。运行测试会启动 WDA 服务；安装后仍需要该服务处于运行状态。
+3. Xcode 用于处理账号与签名；实际启动使用本项目的 `pua_setup(action="start")`。setup 会通过私有 `.xctestrun` 注入凭据。直接运行原版 WDA 不受支持，缺少凭据的补丁 Runner 不会启动控制或视频服务。
 
 本对话首次使用先调用 `pua_setup(action="status")`，复用健康服务或活动工作；缺少服务才 start 一次。start 默认最多等待 20 秒，超时后按同一 job 查询，不重复启动。服务就绪后，以 `pua_ready` 返回 `ready=true` 为准，再开始手机任务。设备与签名要求可参考 [Appium 真机准备说明](https://appium.github.io/appium-xcuitest-driver/latest/getting-started/device-setup/)。
 
 ### 安装插件
 
 ```sh
-git clone https://github.com/zhongerxin/iPhone-use.git
+git clone https://github.com/Lewin671/iPhone-use.git
 cd iPhone-use
 sh scripts/install.sh
 ```
@@ -84,6 +84,16 @@ sh scripts/install.sh
 > 用 iphone-use-setup 帮我配置通过 USB 连接的 iPhone，安装并启动 WDA，验证 READY，然后显示手机屏幕。
 
 技能引导 Codex 完成诊断、设备发现、签名配置、获取 WDA、后台构建与启动。已配置过的设备会复用配置和构建，正常任务不需要每次重装。`pua_ready` 返回 `ready=true` 后才开始手机任务。
+
+## USB、Wi-Fi 与鉴权
+
+首次配对和签名建议使用 USB。配对后，Mac 与 iPhone 处于同一网络、Xcode 能连接设备时，控制和画面流优先选物理 USB；无 USB 时使用该 UDID 的 CoreDevice 私有 IPv6 隧道。不会回退到普通手机局域网 IP，也不会使用 usbmux 的 Network 设备入口。`ready` / setup 状态中的 `transport` 为 `usb` 或 `wifi`；缺少证据时为 null。
+
+每个运行目录使用独立的 256 位随机凭据。Mac 的本机 HTTP 入口、手机 WDA 和 MJPEG 均要求 Bearer 鉴权；Mac 入口及手机端拒绝带 Origin 的请求。旧服务必须先通过安全握手才能接收动作。切换/断线不重放已经发送的操作，结果未知时先读实际状态。
+
+凭据位于运行目录的 `control-token`（600），不出现在工具结果、源码或命令参数中。运行中的网关/Runner 必须使用相同凭据；不要删除或编辑文件来解决连接问题。升级后先停止插件自己拥有的旧任务，fetch、build、start 并重新验证 READY。人工启动的旧 WDA 由其所有者停止，插件不会抢占或杀掉它。
+
+无线传输依赖系统配对隧道；系统版本、Xcode、锁屏和网络隔离可能使启动或重连失败。自动测试不代替真机验收。
 
 ## 可以做什么
 
@@ -115,7 +125,7 @@ sh scripts/install.sh
 
 ## 技术亮点
 
-- **本地 USB 通道。** Python MCP 服务通过本机 loopback 转发访问 WDA，运行数据和签名构建保留在本机。
+- **已鉴权设备通道。** Python MCP 服务通过本机网关访问已鉴权 WDA，USB 或已配对的 CoreDevice 隧道承载连接，运行数据和签名构建保留在本机。
 - **减少重复工作。** 复用 HTTP 连接、WDA session、健康服务与已有构建；首次任务确认 READY，后续沿健康通道继续。
 - **紧凑观察与组合动作。** 控件树省略重复字段；仅需截图时不生成 XML；batch、滚动查找和列表采集减少工具回合。
 - **安装任务异步执行。** 下载、构建与启动返回可查询的工作 ID，重复 setup 优先复用正在进行的工作。

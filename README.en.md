@@ -18,7 +18,7 @@ Paste this prompt into Codex running on your Mac:
 
 ```text
 Install and configure iPhone Use for me:
-https://github.com/zhongerxin/iPhone-use
+https://github.com/Lewin671/iPhone-use
 
 Read the repository README and installation script first. Check Codex CLI,
 Python, Node.js, npm, full Xcode, and the iPhone connected over USB.
@@ -37,7 +37,7 @@ Developer Mode, or unlocking needs my input, explain the exact steps and wait
 for me to complete them before continuing.
 ```
 
-A reconnect may be required to load newly installed tools. Apple account login, device trust, Developer Mode, and unlocking must be completed by the device owner in the system UI. The repository is currently private; GitHub access or a source package is required.
+A reconnect may be required to load newly installed tools. Apple account login, device trust, Developer Mode, and unlocking must be completed by the device owner in the system UI. This fork is publicly available; GitHub access or a source package is required.
 
 ## Requirements
 
@@ -69,7 +69,7 @@ After installing the plugin and configuring USB connectivity, start phone tasks 
 ## Install and connect
 
 ```sh
-git clone https://github.com/zhongerxin/iPhone-use.git
+git clone https://github.com/Lewin671/iPhone-use.git
 cd iPhone-use
 sh scripts/install.sh
 ```
@@ -81,6 +81,16 @@ Reconnect or start a new chat, enable **iPhone Use**, and ask:
 > Use iphone-use-setup to configure my USB-connected iPhone, install and start WDA, verify READY, and show the phone screen.
 
 Setup covers diagnostics, device discovery, signing configuration, download, background build, and startup. Existing configurations and builds are reused. Phone tasks start only after `pua_ready` returns `ready=true`.
+
+## USB, Wi-Fi, and authentication
+
+Pair initially over USB. Both control and preview prefer an actual USB usbmux entry and fall back only to the selected, paired device's CoreDevice private IPv6 tunnel. Ordinary LAN IPs and usbmux Network entries are refused. READY/setup report `transport: usb|wifi` when proven. Connection switching never replays a sent mutation.
+
+This fork applies a bundled authentication patch to pinned WDA 16.14.0. Its build fingerprint includes the patch digest; old builds and unsecured services cannot be reused. A private 256-bit credential protects the loopback HTTP gateway and both on-device control and MJPEG services. A safe handshake precedes mutations; Origin-bearing requests are refused.
+
+Use managed setup to fetch/build/start the runner. Xcode can handle account and signing prerequisites, but directly running stock WDA is unsupported. Setup injects the credential using an owner-only `.xctestrun`, never source or argv. The credential stays in the external runtime directory's `control-token` file. See [SECURITY.md](SECURITY.md) for boundaries and the physical-device acceptance checklist.
+
+Wi-Fi relies on system pairing and the CoreDevice tunnel. Simulator builds and automated tests do not prove wireless startup/reconnection on your iOS/Xcode combination.
 
 ## Features
 

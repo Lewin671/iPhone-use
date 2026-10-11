@@ -33,6 +33,11 @@ def fake_server(responder):
         def handle_request(self):
             size = int(self.headers.get("Content-Length", 0))
             payload = json.loads(self.rfile.read(size)) if size else None
+            if self.headers.get("X-IPhone-Use-Probe") == "1":
+                raw=b'{"value":{"ready":true}}'
+                self.send_response(200);self.send_header("X-IPhone-Use-Auth","bearer-v1")
+                self.send_header("Content-Length",str(len(raw)));self.end_headers();self.wfile.write(raw)
+                return
             requests.append((self.command, self.path, payload))
             peer_ports.append(self.client_address[1])
             status, value, delay, close = responder(self.command, self.path, payload, requests)
@@ -51,6 +56,7 @@ def fake_server(responder):
             try:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
+                self.send_header("X-IPhone-Use-Auth", "bearer-v1")
                 self.send_header("Content-Length", str(len(raw)))
                 if close:
                     self.send_header("Connection", "close")
@@ -86,7 +92,7 @@ class ClientTests(unittest.TestCase):
             return 200, {"value": {"ready": True}}, 0, path == "/close"
 
         with fake_server(respond) as (url, requests, ports):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             try:
                 for path in ("/status", "/status", "/close", "/status"):
                     self.assertTrue(client.request("GET", path)["value"]["ready"])
@@ -105,7 +111,7 @@ class ClientTests(unittest.TestCase):
             return 200, {"value": {"width": 390, "height": 844}}, 0, False
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             self.warm_session(client, "expired")
             try:
                 self.assertEqual(client.session("GET", "/window/size"), {"width": 390, "height": 844})
@@ -122,7 +128,7 @@ class ClientTests(unittest.TestCase):
             return 404, {"value": {"error": "invalid session id", "message": "Expired"}}, 0, False
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             self.warm_session(client, "expired")
             try:
                 with self.assertRaises(WDAError) as caught:
@@ -139,7 +145,7 @@ class ClientTests(unittest.TestCase):
             return 404, {"value": {"error": "invalid session id", "message": "Expired"}}, 0, False
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             self.warm_session(client, "expired")
             try:
                 with self.assertRaises(WDAError) as caught:
@@ -156,7 +162,7 @@ class ClientTests(unittest.TestCase):
             return 200, {"value": None}, 0.15, False
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url, timeout=0.025)
+            client = WDAClient(url, timeout=0.025, token="a" * 64)
             self.warm_session(client, "existing")
             try:
                 with self.assertRaises(WDAError) as caught:
@@ -174,7 +180,7 @@ class ClientTests(unittest.TestCase):
             return 500, {"value": {"error": "unknown error", "message": "Backend failed"}}, 0, False
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             self.warm_session(client, "existing")
             try:
                 with self.assertRaises(WDAError) as caught:
@@ -192,7 +198,7 @@ class ClientTests(unittest.TestCase):
             return 200, {"value": [{"ELEMENT": "found"}]}, 0, False
 
         with fake_server(respond) as (url, requests, ports):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             self.warm_session(client, "existing")
             try:
                 query = {"using": "accessibility id", "value": "按钮"}
@@ -208,7 +214,7 @@ class ClientTests(unittest.TestCase):
             return (None, None, 0, True) if len(requests) == 1 else (200, {"value": "xml"}, 0, False)
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             try:
                 self.assertEqual(client.request("GET", "/source")["value"], "xml")
                 self.assertEqual(len(requests), 2)
@@ -224,7 +230,7 @@ class ClientTests(unittest.TestCase):
             return 200, {"value": [{"ELEMENT": "fresh-element"}]}, 0, False
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             self.warm_session(client, "expired")
             try:
                 self.assertEqual(client.session("POST", "/elements", {"using": "name", "value": "A"}),
@@ -243,7 +249,7 @@ class ClientTests(unittest.TestCase):
             return 404, {"value": {"error": "invalid session id", "message": "Expired"}}, 0, False
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             self.warm_session(client, "expired")
             try:
                 with self.assertRaises(WDAError) as caught:
@@ -260,7 +266,7 @@ class ClientTests(unittest.TestCase):
             return 404, {"value": {"error": "invalid session id", "message": "Expired"}}, 0, False
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             self.warm_session(client, "expired")
             try:
                 with self.assertRaises(WDAError) as caught:
@@ -277,7 +283,7 @@ class ClientTests(unittest.TestCase):
         # use a controlled clock here to test the remaining-budget contract.
         clock = [100.0]
         budgets = []
-        client = WDAClient(timeout=0.08)
+        client = WDAClient(timeout=0.08, token="a" * 64)
         self.warm_session(client, "existing")
         def interrupted_read(method, path, payload, budget, readonly):
             self.assertTrue(readonly)
@@ -302,7 +308,7 @@ class ClientTests(unittest.TestCase):
                 def respond(method, path, body, requests):
                     return 500, response, 0, False
                 with fake_server(respond) as (url, requests, _):
-                    client = WDAClient(url)
+                    client = WDAClient(url, token="a" * 64)
                     self.warm_session(client, "existing")
                     try:
                         with self.assertRaises(WDAError) as caught:
@@ -320,7 +326,7 @@ class ClientTests(unittest.TestCase):
                 def respond(method, path, body, requests):
                     return None, None, 0, True
                 with fake_server(respond) as (url, requests, _):
-                    client = WDAClient(url)
+                    client = WDAClient(url, token="a" * 64)
                     self.warm_session(client, "existing")
                     try:
                         with self.assertRaises(WDAError) as caught:
@@ -336,7 +342,7 @@ class ClientTests(unittest.TestCase):
             return None, None, 0, True
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             try:
                 with self.assertRaises(WDAError) as caught:
                     client.request("GET", "/wda/healthcheck")
@@ -352,7 +358,7 @@ class ClientTests(unittest.TestCase):
             return 200, {"value": {}}, 0, False
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             try:
                 self.assertEqual(client.ensure_session(), "fresh")
                 self.assertEqual(client.ensure_session(), "fresh")
@@ -374,7 +380,7 @@ class ClientTests(unittest.TestCase):
             return 200, {"value": {}}, 0, False
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             client.session_id = "persisted"
             try:
                 self.assertEqual(client.ensure_session(), "persisted")
@@ -396,7 +402,7 @@ class ClientTests(unittest.TestCase):
                         return 200, {"value": {"sessionId": "fresh"}}, 0, False
                     return 200, {"value": []}, 0, False
                 with fake_server(respond) as (url, requests, _):
-                    client = WDAClient(url)
+                    client = WDAClient(url, token="a" * 64)
                     client.session_id = "persisted"
                     try:
                         if path == "/elements":
@@ -418,7 +424,7 @@ class ClientTests(unittest.TestCase):
             return None, None, 0, True
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             try:
                 for _ in range(2):
                     with self.assertRaises(WDAError) as caught:
@@ -439,7 +445,7 @@ class ClientTests(unittest.TestCase):
             return 404, {"value": {"error": "invalid session id", "message": "Expired"}}, 0, False
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             try:
                 with self.assertRaises(WDAError) as caught:
                     client.ensure_session()
@@ -456,7 +462,7 @@ class ClientTests(unittest.TestCase):
             return 200, {"value": phrase}, 0, False
 
         with fake_server(respond) as (url, requests, _):
-            client = WDAClient(url)
+            client = WDAClient(url, token="a" * 64)
             self.warm_session(client, "private-device-session")
             try:
                 value = client.session("POST", "/element/private-element/value", {"text": phrase})
@@ -472,7 +478,7 @@ class ClientTests(unittest.TestCase):
     def test_rejects_remote_or_decorated_urls(self):
         for url in ("http://192.168.1.2:8100", "https://localhost:8100", "http://user@localhost", "http://localhost/api", "http://localhost?token=x"):
             with self.subTest(url=url), self.assertRaises(ValueError):
-                WDAClient(url)
+                WDAClient(url, token="a" * 64)
 
 
 if __name__ == "__main__":

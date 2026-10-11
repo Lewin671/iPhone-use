@@ -190,7 +190,7 @@ class SetupTests(unittest.TestCase):
             self.assertFalse(self.configure(source_dir=str(source))["ok"])
         self.assertEqual((source / "WebDriverAgent.xcodeproj/project.pbxproj").read_text(), "fixture")
         responses = [{"ok": True, "stdout": wda_setup.WDA_COMMIT + "\n"}, {"ok": True, "stdout": ""}]
-        with patch.object(wda_setup, "_run", side_effect=responses):
+        with patch.object(wda_setup, "_run", side_effect=responses), patch.object(wda_setup.device_security, "verify_source"):
             self.assertTrue(self.configure(source_dir=str(source))["ok"])
 
     def test_start_requires_matching_successful_build(self):
@@ -323,7 +323,7 @@ class SetupTests(unittest.TestCase):
         (source / "WebDriverAgent.xcodeproj").mkdir(parents=True)
         (source / "WebDriverAgent.xcodeproj/project.pbxproj").write_text("fixture")
         git = bin_dir / "git"
-        git.write_text(f"#!{sys.executable}\nimport sys\nif 'rev-parse' in sys.argv: print({wda_setup.WDA_COMMIT!r})\n")
+        git.write_text(f"#!{sys.executable}\nimport sys\nfrom pathlib import Path\nif 'rev-parse' in sys.argv: print({wda_setup.WDA_COMMIT!r})\nif 'diff' in sys.argv: sys.stdout.write(Path({str(wda_setup.device_security.PATCH)!r}).read_text())\n")
         xcode = bin_dir / "xcodebuild"
         xcode.write_text(f"#!{sys.executable}\nimport subprocess, sys, time\nfrom pathlib import Path\n"
                          "child=subprocess.Popen([sys.executable,'-c','import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(120)'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
@@ -670,6 +670,7 @@ class SetupTests(unittest.TestCase):
         second.stdout = io.StringIO("")
         second.poll.side_effect = [None, 1]
         with patch.object(wda_setup.SetupManager, "_source", return_value=Path(self.temp.name)), \
+             patch.object(wda_setup.device_security, "authenticated_xctestrun", return_value=Path(self.temp.name)/"run.xctestrun"), \
              patch.object(wda_setup.SetupManager, "_stop_recovery_target") as stop, \
              patch.object(wda_setup.SetupManager, "_probe_status", return_value={"ready": True}) as healthy, \
              patch.object(wda_setup.subprocess, "Popen", side_effect=[first, second]) as launch, \

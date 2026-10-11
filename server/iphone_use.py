@@ -23,11 +23,12 @@ from wda_setup import SetupManager, state_directory
 from wda_apps import AppCatalog
 from wda_screen import ScreenHub
 import wda_image
+from device_security import control_token
 from analytics import Analytics
 
 PUAError=WDAError
-VERSION="0.3.10"
-SCREEN_URI="ui://iphone-use/phone-0.3.10.html"
+VERSION="0.4.0"
+SCREEN_URI="ui://iphone-use/phone-0.4.0.html"
 # Codex scopes reuse to the host, chat, server and UI resource. A stable result
 # ID keeps repeated READY/open/pause/resume calls in that chat on one panel,
 # including after the MCP process reconnects; no device identifiers are needed.
@@ -258,7 +259,7 @@ def setting(name,default,low,high):
 class Runtime:
     def __init__(self,state_dir=None,base_url=None):
         root=state_directory(state_dir)
-        self.state_dir=Path(root).expanduser().resolve();self.state_dir.mkdir(mode=0o700,parents=True,exist_ok=True);self.state_dir.chmod(0o700)
+        self.state_dir=Path(root).expanduser().resolve()
         # Configuration is private runtime data, never a project file.
         configured_url=None
         config=self.state_dir/"config.json"
@@ -266,9 +267,11 @@ class Runtime:
             try:configured_url="http://127.0.0.1:"+str(json.loads(config.read_text()).get("local_port",18100))
             except (ValueError,OSError):pass
         self.base_url=base_url or os.environ.get("WDA_URL") or configured_url or "http://127.0.0.1:18100"
-        self.client=WDAClient(self.base_url)
-        self.phone=PhoneController(self.client,self.state_dir)
+        # Validate the external state directory before creating any credential.
         self.setup_manager=SetupManager(self.state_dir,self.base_url)
+        self.auth_token=control_token(self.state_dir)
+        self.client=WDAClient(self.base_url,token=self.auth_token)
+        self.phone=PhoneController(self.client,self.state_dir)
         self.apps=AppCatalog(self.state_dir,self.setup_manager)
         self.screen=ScreenHub(self.state_dir)
         self.phone.screen=self.screen
@@ -367,7 +370,7 @@ class Runtime:
         if action=="refresh":
             pause_id=self.screen.reconnect_pause_id()
             state=self.screen.restart()
-            probe=WDAClient(self.base_url,timeout=2)
+            probe=WDAClient(self.base_url,timeout=12,token=self.auth_token)
             try:
                 ready=(probe.request("GET","/status").get("value") or {}).get("ready") is True
                 if ready:
@@ -380,7 +383,7 @@ class Runtime:
             return {"ok":True,"action":action,"service_ready":ready,**state,**self.screen.pause_status()}
         if self.screen.paused():
             raise WDAError("preview_paused","The preview is paused while the user authenticates on the iPhone. No capture or phone action was made.",details={"action_executed":False})
-        client=WDAClient(self.base_url,timeout=8)
+        client=WDAClient(self.base_url,timeout=8,token=self.auth_token)
         try:
             if action=="home":
                 lock_path=self.state_dir/"operation.lock"
@@ -419,7 +422,7 @@ class Runtime:
         sid=self.client.ensure_session()
         observation=self.phone.observe("both" if screenshot else "tree")
         if observation.get("total_nodes",0)==0 and self.setup_manager.mirroring_running():raise WDAError("mirroring_conflict","iPhone Mirroring is running and PUA exposes an empty phone tree. Quit Mirroring, unlock if needed, then verify READY again.")
-        result={"ready":True,"state":"ready","proof":{"status_ready":True,"phone_unlocked":True,"session_usable":bool(sid),"foreground_resolved":True,"source_readable":True,"viewport_readable":True,"screenshot_readable":screenshot},"observation":observation}
+        result={"ready":True,"state":"ready","transport":getattr(self.client,"transport",None),"proof":{"status_ready":True,"phone_unlocked":True,"session_usable":bool(sid),"foreground_resolved":True,"source_readable":True,"viewport_readable":True,"screenshot_readable":screenshot},"observation":observation}
         try:
             self.screen.resume_after_unlock(lock_pause)
             result["preview"]=self.screen.pause_status()
@@ -503,7 +506,7 @@ class Runtime:
                 if result.get("ok") and args["action"]=="configure" and "local_port" in args:
                     self.base_url=candidate_url;self.setup_manager=manager
                     self.apps.setup_manager=manager
-                    self.client=WDAClient(self.base_url);self.phone.client=self.client
+                    self.client=WDAClient(self.base_url,token=self.auth_token);self.phone.client=self.client
                 return result
             if op=="ready":
                 try:self.screen.start()

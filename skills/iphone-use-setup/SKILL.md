@@ -55,3 +55,11 @@ READY 已返回设备、会话、视口和当前 observation，复用这些信�
 Apple 的 [开发者账户说明](https://developer.apple.com/help/account/basics/about-your-developer-account)说明 Personal Team 最多可安装 3 个 App / 设备，provisioning profile 自签发起 7 天过期，届时需要重建重装。免费账户可用于个人设备测试，不能据此承诺永久运行。
 
 [Apple 开发者模式](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device)与 [Appium 真机准备](https://appium.github.io/appium-xcuitest-driver/latest/getting-started/device-setup/)提供配对、开发模式与签名要求。流程以当前 Xcode/iOS 的实际提示和工具诊断为准；本插件不要求越狱。
+
+## 本 fork 的连接与鉴权
+
+fetch 获取固定提交并应用随包 手机端执行服务 鉴权补丁；build 指纹包含补丁摘要。只复用已鉴权且补丁匹配的构建/服务，原版 手机端执行服务 必须由所有者停止后重新构建。不要直接在 Xcode 启动原版 Runner，也不要为了连通而关闭认证或改用手机局域网 IP。
+
+控制和实时画面优先物理 USB，失败后仅连接已选 UDID、已配对、已连接的 CoreDevice 隧道；拒绝 usbmux Network 设备路径。READY/setup 的 transport 是实际通道证据，不根据“插没插线”猜测。断线不重放已发送动作。
+
+凭据由 setup 自动管理，保存在外部运行目录的 control-token（600），通过私有 xctestrun 传给手机。不得读取/展示凭据、放进命令参数或 Git。升级应停止仅属于本插件的旧服务，再 fetch/build/start；不要删除状态目录或杀掉外部服务。

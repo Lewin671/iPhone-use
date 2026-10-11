@@ -27,6 +27,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import device_security
 
 WDA_COMMIT = "d17782422d55ff1e5e0ceb74eb1fd509cc0c35b6"
 WDA_VERSION = "16.14.0"
@@ -61,6 +62,7 @@ def _redact(value):
     value = re.sub(r"(?i)(authorization\s*[:=]\s*)(?:bearer|basic)\s+\S+", r"\1[redacted]", value)
     value = re.sub(r"(?i)((?:password|passwd|authorization|access[_ -]?token|api[_ -]?key|secret)\s*[:=]\s*)([^\s,;]+)", r"\1[redacted]", value)
     value = re.sub(r"https?://[^/\s:@]+:[^/\s@]+@", "https://[redacted]@", value)
+    value = re.sub(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", "[redacted credential]", value)
     return value
 
 
@@ -96,7 +98,7 @@ def _run(argv, timeout=12, cwd=None):
 
 
 def _fingerprint(config):
-    return hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps({"config": config, "security_patch": device_security.patch_digest()}, sort_keys=True).encode()).hexdigest()
 
 
 def _node_supported(version):
@@ -183,9 +185,7 @@ class SetupManager:
         revision = _run(["git", "-C", str(source), "rev-parse", "HEAD"])
         if not revision["ok"] or revision["stdout"].strip() != WDA_COMMIT:
             raise ValueError(f"WDA source must be pinned to {WDA_VERSION} ({WDA_COMMIT}); existing checkouts are never changed automatically.")
-        dirty = _run(["git", "-C", str(source), "status", "--porcelain", "--untracked-files=no"])
-        if not dirty["ok"] or dirty["stdout"].strip():
-            raise ValueError("Pinned WDA source has tracked changes. Use fetch for a clean isolated checkout; existing work is preserved.")
+        device_security.verify_source(source)
         return source
 
     @staticmethod
@@ -240,16 +240,19 @@ class SetupManager:
                 os.unlink(name)
 
     def _probe_status(self):
+        # The same bounded transport as commands: no proxies or redirects carrying credentials.
+        from wda_client import WDAClient, WDAError
+        client = None
         try:
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-            request = urllib.request.Request(self.base_url + "/status", headers={"Accept": "application/json"})
-            with opener.open(request, timeout=1.5) as response:
-                document = json.loads(response.read(1024 * 1024))
-            value = document.get("value", {})
-            return {"reachable": True, "ready": value.get("ready") is True, "wda": value,
+            client = WDAClient(self.base_url, timeout=12, token=device_security.control_token(self.state_dir))
+            value = client.request("GET", "/status").get("value", {})
+            return {"reachable": True, "ready": value.get("ready") is True, "authenticated": True,
+                    "transport": client.transport, "wda": value,
                     "next_step": "Run MCP session + source smoke check before declaring the phone usable."}
-        except (OSError, ValueError, urllib.error.URLError) as error:
+        except (OSError, ValueError, WDAError) as error:
             return {"reachable": False, "ready": False, "error": _redact(error)}
+        finally:
+            if client is not None: client.close()
 
     def mirroring_running(self):
         if sys.platform != "darwin":
@@ -586,6 +589,9 @@ class SetupManager:
         return {"ok": job["state"] != "failed", "job_id": job_id, "job": self._job_status(job), "next_step": "Poll setup status with this job_id; do not block MCP waiting for Xcode."}
 
     def _build_command(self, config, action):
+        if action == "test-without-building":
+            run_file = device_security.authenticated_xctestrun(self.state_dir, config["device_port"])
+            return ["xcodebuild", "-xctestrun", str(run_file), "-destination", "id=" + config["udid"], action]
         return ["xcodebuild", "-project", str(Path(config["source_dir"]) / "WebDriverAgent.xcodeproj"),
                 "-scheme", "WebDriverAgentRunner", "-configuration", "Debug", "-destination", "id=" + config["udid"],
                 "-derivedDataPath", str(self.state_dir / "derived_data"), "-allowProvisioningUpdates",
@@ -740,7 +746,10 @@ def _worker(state_dir, job_id, owner_token, base_url):
 
     def launch(argv, cwd=None):
         """Redact command output before it reaches the private on-disk log."""
-        child = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL,
+        child_env = os.environ.copy()
+        child_env["IPHONE_USE_AUTH_FILE"] = str(manager.state_dir / device_security.TOKEN_FILE)
+        child_env.pop("IPHONE_USE_DEVICE_TOKEN", None)
+        child = subprocess.Popen(argv, cwd=cwd, env=child_env, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  text=True, errors="replace", bufsize=1)
         children.append(child)
@@ -799,6 +808,7 @@ def _worker(state_dir, job_id, owner_token, base_url):
                     raise ValueError("Owned runtime checkout is modified or has a different origin. Preserve it and select a new external runtime state directory before fetching again.")
                 run(["git", "-C", str(source), "fetch", "--depth", "1", "origin", WDA_COMMIT])
                 run(["git", "-C", str(source), "checkout", "--detach", "FETCH_HEAD"])
+                device_security.apply_patch(source)
                 manager._source({"source_dir": str(source)})
             job["source_dir"] = str(source)
         elif action in {"build", "start", "recover"}:
@@ -822,13 +832,14 @@ def _worker(state_dir, job_id, owner_token, base_url):
                     _write_json(path, job)
                 forward = manager.state_dir / "runtime/forward"
                 forward.mkdir(exist_ok=True, mode=0o700)
-                for name in ("package.json", "package-lock.json", "forward.mjs"):
+                for name in ("package.json", "package-lock.json", "forward.mjs", "device-transport.mjs", "auth.mjs"):
                     shutil.copyfile(PLUGIN_ROOT / "tooling" / name, forward / name)
                     (forward / name).chmod(0o600)
                 lock_hash = hashlib.sha256((forward / "package-lock.json").read_bytes()).hexdigest()
                 if _read_json(forward / "installed.json", {}).get("lock_hash") != lock_hash or not (forward / "node_modules/appium-ios-device").is_dir():
                     run(["npm", "ci", "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund"], cwd=forward)
                     _write_json(forward / "installed.json", {"lock_hash": lock_hash})
+                device_security.control_token(manager.state_dir)
                 forward_child = launch(["node", str(forward / "forward.mjs"), config["udid"], str(config["local_port"]), str(config["device_port"])])
                 time.sleep(0.15)
                 if forward_child.poll() is not None:

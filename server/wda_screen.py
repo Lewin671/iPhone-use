@@ -21,6 +21,7 @@ import tempfile
 import threading
 import time
 import uuid
+from device_security import TOKEN_FILE
 
 MAX_FRAME_BYTES = 4 * 1024 * 1024
 FRAME_LEASE_SECONDS = 5
@@ -418,18 +419,19 @@ class ScreenHub:
             source = Path(__file__).resolve().parents[1] / "tooling/screen-stream.mjs"
             if not node or not (runtime / "node_modules/appium-ios-device").is_dir() or not source.is_file():
                 return None
-            target = runtime / "screen-stream.mjs"
-            source_bytes = source.read_bytes()
-            if not target.is_file() or target.read_bytes() != source_bytes:
-                fd, temporary = tempfile.mkstemp(prefix=".screen-stream-", dir=runtime)
-                try:
-                    os.fchmod(fd, 0o600)
-                    with os.fdopen(fd, "wb") as stream:
-                        stream.write(source_bytes)
-                    os.replace(temporary, target)
-                finally:
-                    if os.path.exists(temporary):
-                        os.unlink(temporary)
+            for name in ("device-transport.mjs", "auth.mjs", "screen-stream.mjs"):
+                target = runtime / name
+                source_bytes = (source.parent / name).read_bytes()
+                if not target.is_file() or target.read_bytes() != source_bytes:
+                    fd, temporary = tempfile.mkstemp(prefix=".screen-stream-", dir=runtime)
+                    try:
+                        os.fchmod(fd, 0o600)
+                        with os.fdopen(fd, "wb") as stream:
+                            stream.write(source_bytes)
+                        os.replace(temporary, target)
+                    finally:
+                        if os.path.exists(temporary):
+                            os.unlink(temporary)
             return [node, str(target), udid, str(port)]
         except (OSError, ValueError, AttributeError):
             return None
@@ -461,7 +463,9 @@ class ScreenHub:
             try:
                 command = self._command()
                 if command:
-                    child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    child_env = os.environ.copy()
+                    child_env["IPHONE_USE_AUTH_FILE"] = str(self.state_dir / TOKEN_FILE)
+                    child = subprocess.Popen(command, env=child_env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                              stderr=subprocess.DEVNULL, bufsize=0)
                     with self._lock:
                         self._child = child

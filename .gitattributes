@@ -1,0 +1,2 @@
+# Unified diffs use a single space to encode empty context lines.
+tooling/wda-auth.patch -whitespace
