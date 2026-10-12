@@ -1,5 +1,5 @@
 diff --git a/WebDriverAgentLib/Routing/FBHTTPServer.m b/WebDriverAgentLib/Routing/FBHTTPServer.m
-index 767e7fcf..10cc19f6 100644
+index 767e7fcfd4adab035df785e7d294dc306ee76b48..10cc19f6f5cdd9caf8024d1295df1d0bff47b46a 100644
 --- a/WebDriverAgentLib/Routing/FBHTTPServer.m
 +++ b/WebDriverAgentLib/Routing/FBHTTPServer.m
 @@ -7,6 +7,7 @@
@@ -48,7 +48,7 @@ index 767e7fcf..10cc19f6 100644
      return nil;
 diff --git a/WebDriverAgentLib/Routing/FBUseAuthentication.h b/WebDriverAgentLib/Routing/FBUseAuthentication.h
 new file mode 100644
-index 00000000..3bef1056
+index 0000000000000000000000000000000000000000..3bef1056e7fb43dbb7a1876117c20c3f71c8a1df
 --- /dev/null
 +++ b/WebDriverAgentLib/Routing/FBUseAuthentication.h
 @@ -0,0 +1,55 @@
@@ -108,7 +108,7 @@ index 00000000..3bef1056
 +    FBUseAuthorized(fields[@"authorization"]);
 +}
 diff --git a/WebDriverAgentLib/Routing/FBWebServer.m b/WebDriverAgentLib/Routing/FBWebServer.m
-index af0d82b3..69f3c542 100644
+index af0d82b3e63982188bb7d8c867916e167599efe2..69f3c5428abc5d07411660a486fec8ab604ecb4e 100644
 --- a/WebDriverAgentLib/Routing/FBWebServer.m
 +++ b/WebDriverAgentLib/Routing/FBWebServer.m
 @@ -7,6 +7,7 @@
@@ -141,7 +141,7 @@ index af0d82b3..69f3c542 100644
    [NSNotificationCenter.defaultCenter addObserver:self
                                            selector:@selector(sessionWasKilled:)
 diff --git a/WebDriverAgentLib/Utilities/FBMjpegServer.m b/WebDriverAgentLib/Utilities/FBMjpegServer.m
-index 0b4a67f2..379b2cd4 100644
+index 0b4a67f25cb2e0d2e18eb173d456f1752084a116..379b2cd40c319d73ff3a7879473c06026e790a48 100644
 --- a/WebDriverAgentLib/Utilities/FBMjpegServer.m
 +++ b/WebDriverAgentLib/Utilities/FBMjpegServer.m
 @@ -7,6 +7,7 @@

@@ -52,7 +52,7 @@ def patch_digest():
 
 def verify_source(source):
     """Accept exactly the bundled changes, including new headers; no unrelated edits."""
-    result = subprocess.run(["git", "-C", str(source), "diff", "--binary", "HEAD"],
+    result = subprocess.run(["git", "-C", str(source), "diff", "--binary", "--full-index", "HEAD"],
                             capture_output=True, check=True)
     if result.stdout != PATCH.read_bytes():
         raise ValueError("WDA must have exactly the bundled authentication patch; fetch the managed source.")
