@@ -23,8 +23,10 @@ test('prefers USB on each connection, falls back to Wi-Fi and returns to USB aft
   const connect = createConnector(async () => { if (plugged) return usb; throw Error('unplugged'); },
     async () => { lookups++; return 'fd12::1'; }, async () => wifi);
   assert.equal(await connect(udid,8100),usb); assert.equal(lookups,0);
+  assert.equal(usb.iphoneUseTransport,'usb');
   plugged = false;
   assert.equal(await connect(udid,8100),wifi); assert.equal(lookups,1);
+  assert.equal(wifi.iphoneUseTransport,'wifi');
   assert.equal(await connect(udid,9100),wifi); assert.equal(lookups,1);
   plugged = true;
   assert.equal(await connect(udid,8100),usb);

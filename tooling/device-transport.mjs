@@ -50,7 +50,7 @@ export function createConnector(usbConnect, lookup = discover, tcpConnect = conn
       return await Promise.race([
         Promise.resolve().then(() => usbConnect(udid, port)).then(socket => {
           if (expired) { socket.destroy(); throw new Error('USB connection expired.'); }
-          return socket;
+          socket.iphoneUseTransport = 'usb'; return socket;
         }),
         new Promise((_, reject) => { timer = setTimeout(() => {
           expired = true; reject(new Error('USB connection timed out.'));
