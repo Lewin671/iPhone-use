@@ -95,6 +95,8 @@ sh scripts/install.sh
 
 无线传输依赖系统配对隧道；系统版本、Xcode、锁屏和网络隔离可能使启动或重连失败。自动测试不代替真机验收。
 
+启动 Runner 时请插着 USB。已验证的组合（Xcode 27.0、iOS 18.5、iPhone 13）下，仅靠无线无法启动：Runner 能在手机上拉起，约 18 秒后以 `Connection peer refused channel request` 和退出码 74 结束。Runner 用 USB 启动后可以拔线，控制与画面流在无线隧道上继续工作，不需要重启。`transport` 的 `wifi` 表示走 CoreDevice 隧道；插着线时隧道本身也可能走有线，因此它不等于“当前没有插线”。
+
 ## 可以做什么
 
 | 功能 | 示例 |

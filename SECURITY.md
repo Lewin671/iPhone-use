@@ -21,9 +21,14 @@ Stop only the plugin-owned old worker, fetch the managed patched source, build a
 
 The maintained patch is `tooling/wda-auth.patch`, against Appium WDA commit `d17782422d55ff1e5e0ceb74eb1fd509cc0c35b6` (16.14.0). New upstream versions require re-reviewing and rebuilding this patch.
 
-## Physical-device acceptance (not yet completed)
+## Physical-device acceptance (partially completed)
 
-Automated regressions and a generic iOS Simulator build passed during development. Physical signing was blocked by Xcode reporting “No Accounts” and no provisioning profile for the validation runner. This is not evidence that USB/Wi-Fi runtime acceptance passed.
+On 2026-10-12 the managed patched runner was signed, installed and exercised on an iPhone 13 (iOS 18.5) with Xcode 27.0:
+
+- READY with authentication, page source, screenshot, Home, app launch and swipe passed, and live MJPEG delivered about 8 frames per second, both with the cable attached and after unplugging it (CoreDevice tunnel over `localNetwork`).
+- The runner survived unplugging without a restart. Actions were refused with `phone_locked` while the phone was locked.
+- A wireless-only start failed; the runner must be started with USB connected.
+- Not exercised: the direct usbmux path (both runs reported the CoreDevice tunnel), and items 2, 3 and 5 below. Item 4 is only partly covered.
 
 Before relying on this build:
 

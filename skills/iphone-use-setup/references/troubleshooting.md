@@ -11,6 +11,7 @@
 | maximum number of apps for free development profiles | Personal Team 是否已有 3 个开发 App | 列明系统指出的限制，用户自己选择是否卸载不需要的开发 App，或使用其已有的其他有效团队；不要自动删 App，也不要强迫购买开发者计划。 |
 | profile / certificate expired、旧 Runner 不再启动 | 构建日志的签名有效性与 profile 到期 | 使用原有本机配置重新 build/start，重新验 READY；免费 profile 常需 7 天后续签，具体以当前 profile 为准。不要只重开端口。 |
 | developer not trusted / unable to verify | 手机开发者条目、网络与 Xcode 提示 | 用户在当前开发者条目完成信任或验证，按系统错误检查网络；不吊销其他项目的共享证书。 |
+| start 失败，日志含 Connection peer refused channel request … XCTestManager_IDEInterface、exited with code 74 before establishing connection | discover 返回的 transport 是否为 localNetwork（仅无线） | 请用户插上 USB 后再 start 一次；已验证 Xcode 27.0 + iOS 18.5 下仅无线无法启动 Runner。启动并 READY 后可以拔线继续使用。不要在无线下反复 start，也不要先去排查 UI 自动化开关、iPhone 镜像或代理。 |
 | build succeeded，但 HTTP 不可达 | Runner 测试是否仍在运行、USB 转发进程及本机端口 | 用 status 分开确认运行与转发，再 start 恢复；不把 BUILD SUCCEEDED 当 READY。 |
 | 端口冲突 | 是否已有正确设备的转发或无关程序 | 正确转发可复用；否则配置空闲的本机端口。不要杀掉归属不明的进程。 |
 | HTTP status 可达，会话或 source 失败 | 服务对应的设备、PUA session、设备锁屏 / 测试进程 | 先读取错误与状态，必要时重建会话 / 重启 Runner；重新验有效视口与当前观察。 |

@@ -92,6 +92,8 @@ Use managed setup to fetch/build/start the runner. Xcode can handle account and 
 
 Wi-Fi relies on system pairing and the CoreDevice tunnel. Simulator builds and automated tests do not prove wireless startup/reconnection on your iOS/Xcode combination.
 
+Keep USB connected while starting the runner. On the verified combination (Xcode 27.0, iOS 18.5, iPhone 13) a wireless-only start fails: the runner launches, then exits after about 18 seconds with `Connection peer refused channel request` and exit code 74. Once started over USB, the cable can be unplugged; control and preview continue over the wireless tunnel without a restart. `transport: wifi` means the CoreDevice tunnel, which may itself run over the cable while plugged in, so it does not prove the cable is absent.
+
 ## Features
 
 | Feature | Behavior |
