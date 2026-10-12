@@ -36,7 +36,7 @@ const server = http.createServer({ maxHeaderSize: 8192 }, (request, response) =>
       !authorized(request.headers.authorization, token)) {
     reject(response, 401, 'authentication required'); request.resume(); return;
   }
-  if (!['GET', 'POST', 'DELETE'].includes(request.method) || !/^\/[A-Za-z0-9_/%?.=&-]*$/.test(request.url)) {
+  if (!['GET', 'POST', 'DELETE'].includes(request.method) || !/^\/[A-Za-z0-9_/%?.=&,-]*$/.test(request.url)) {
     reject(response, 400, 'invalid request'); request.resume(); return;
   }
   const chunks = []; let size = 0, upstream;
